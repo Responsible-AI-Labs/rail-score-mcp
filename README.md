@@ -1,5 +1,11 @@
 # RAIL Score MCP Server
 
+> **Public mirror:** the open-source, registry-facing copy lives at
+> [`Responsible-AI-Labs/rail-score-mcp`](https://github.com/Responsible-AI-Labs/rail-score-mcp).
+> This monorepo directory is the **deploy source** (Cloud Run CI lives here).
+> The two are kept in sync by hand — when you change the service here, mirror the
+> code change to the public repo (and vice versa).
+
 Add a responsible-AI safety layer to any agent in one URL.
 
 A remote, hosted [Model Context Protocol](https://modelcontextprotocol.io) server
@@ -102,8 +108,12 @@ a hard CI gate.
 - **Transport:** Streamable HTTP only, single `/mcp` endpoint (SSE is sunset).
 - **State:** `stateless_http=True`, `json_response=True` — scales horizontally
   behind a normal load balancer; aligns with the MCP 2026-07-28 stateless core.
-- **Auth (phase 1):** bearer `rail_` key, validated once against `POST /verify`
-  (cached 5 min) by `auth.RailKeyMiddleware`, then bound to the request context.
+- **Auth (phase 1):** `rail_` key via `Authorization: Bearer rail_...` **or**
+  `X-API-Key: rail_...` (the latter is gateway-friendly — no Bearer prefix),
+  validated once against `POST /verify` (cached 5 min) by
+  `auth.RailKeyMiddleware`, then bound to the request context.
+- **Discovery:** `GET /.well-known/mcp/server-card.json` (public) lets registries
+  that scan behind an auth wall (e.g. Smithery) enumerate the tools without a key.
 - **Auth (phase 2):** OAuth 2.1 resource server (RFC 9728 metadata, RFC 8707
   audience binding) via the SDK's `TokenVerifier`.
 
@@ -141,20 +151,13 @@ npx @modelcontextprotocol/inspector --cli \
 | `RAIL_UPSTREAM_TIMEOUT` | `60` | Upstream call timeout (s) |
 | `RAIL_KEY_CACHE_TTL` | `300` | Validated-key cache TTL (s) |
 
-## Hosting
+## Deployment
 
-Responsible AI Labs operates the hosted server at
-`https://mcp.responsibleailabs.ai/mcp` — for almost everyone, just connect to
-that URL; you do not need to run anything.
-
-To self-host, build the image and run it anywhere that serves HTTP; point it at
-the public REST API with `RAIL_API_BASE` (its default). No secrets are required:
-the customer's RAIL key arrives on each request.
-
-```bash
-docker build -t rail-score-mcp .
-docker run -p 8080:8080 -e RAIL_API_BASE=https://api.responsibleailabs.ai rail-score-mcp
-```
+Cloud Run, `us-central1`, project `rail-prod-gcp`, service `rail-mcp-server`.
+Deploys are CI-only: a path-filtered GitHub Actions workflow
+(`.github/workflows/deploy-mcp-server.yml`) builds and rolls out on merge to
+`main`. The only env var is `RAIL_API_BASE`; no secrets are needed in phase 1
+because the customer key arrives on the wire.
 
 ## Registry
 

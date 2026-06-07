@@ -17,6 +17,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import os
 from typing import Any, Literal
 
 import uvicorn
@@ -33,6 +34,17 @@ from request_context import AuthRequired
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("rail-mcp")
+
+
+def _read_version() -> str:
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "VERSION")) as f:
+            return f.read().strip()
+    except OSError:
+        return "0.0.0"
+
+
+SERVER_VERSION = _read_version()
 
 mcp = FastMCP(
     "rail-score",
@@ -456,6 +468,33 @@ def capabilities() -> str:
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "service": "rail-mcp-server"})
+
+
+async def _build_server_card() -> dict[str, Any]:
+    """MCP server card (SEP-1649 shape). Lets registries that scan behind an
+    auth wall (e.g. Smithery) list our tools without a key. Built from the live
+    registry so it never drifts from the actual tools."""
+    tools = await mcp.list_tools()
+    resources = await mcp.list_resources()
+    return {
+        "serverInfo": {"name": "rail-score", "version": SERVER_VERSION},
+        # API-key auth: clients send X-API-Key (or Authorization: Bearer rail_).
+        "authentication": {"required": True, "schemes": ["apiKey"]},
+        "tools": [
+            {"name": t.name, "description": t.description, "inputSchema": t.inputSchema}
+            for t in tools
+        ],
+        "resources": [
+            {"uri": str(r.uri), "name": r.name, "description": r.description}
+            for r in resources
+        ],
+        "prompts": [],
+    }
+
+
+@mcp.custom_route("/.well-known/mcp/server-card.json", methods=["GET"])
+async def server_card(_request: Request) -> JSONResponse:
+    return JSONResponse(await _build_server_card())
 
 
 def build_app():

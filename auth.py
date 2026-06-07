@@ -53,6 +53,21 @@ def _cache_set(key: str, tenant: dict[str, Any]) -> None:
     _cache[_cache_key(key)] = (time.monotonic() + config.KEY_CACHE_TTL, tenant)
 
 
+def extract_api_key(authorization: str, x_api_key: str) -> str | None:
+    """Pull a `rail_` key from either auth header.
+
+    Two accepted forms so gateways (e.g. Smithery) that forward a raw value
+    work without a Bearer prefix:
+      - `Authorization: Bearer rail_...`  (standard)
+      - `X-API-Key: rail_...`             (raw key, gateway-friendly)
+    """
+    if authorization.startswith("Bearer rail_"):
+        return authorization.removeprefix("Bearer ").strip()
+    if x_api_key.startswith("rail_"):
+        return x_api_key.strip()
+    return None
+
+
 class RailKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -62,13 +77,15 @@ class RailKeyMiddleware(BaseHTTPMiddleware):
         # Correlation id: honour an inbound one, else mint a new one.
         request_id = request.headers.get("x-request-id") or f"mcp_{uuid.uuid4().hex[:12]}"
 
-        auth = request.headers.get("authorization", "")
-        if not auth.startswith("Bearer rail_"):
+        key = extract_api_key(
+            request.headers.get("authorization", ""),
+            request.headers.get("x-api-key", ""),
+        )
+        if key is None:
             return JSONResponse(
                 {"error": "missing or invalid RAIL API key", "code": "UNAUTHENTICATED"},
                 status_code=401,
             )
-        key = auth.removeprefix("Bearer ").strip()
 
         tenant = _cache_get(key)
         if tenant is None:
