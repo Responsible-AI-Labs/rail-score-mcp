@@ -33,7 +33,7 @@ jobs:
       - name: Validate server.json against schema
         run: |
           npx --yes ajv-cli@5 validate --spec=draft2020 \
-            -s <(curl -fsSL https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json) \
+            -s <(curl -fsSL https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json) \
             -d server.json || echo "::warning::server.json schema validation skipped (schema fetch failed)"
 
   publish-registry:
