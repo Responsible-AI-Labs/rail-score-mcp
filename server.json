@@ -1,0 +1,17 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "name": "ai.responsibleailabs/rail-score",
+  "description": "Responsible AI guardrails for agents: 8-dimension content evaluation, prompt-injection detection, tool-call gating, PII scanning, and India DPDP compliance.",
+  "version": "1.0.0",
+  "websiteUrl": "https://responsibleailabs.ai",
+  "repository": {
+    "url": "https://github.com/Responsible-AI-Labs/rail-score-mcp",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.responsibleailabs.ai/mcp"
+    }
+  ]
+}

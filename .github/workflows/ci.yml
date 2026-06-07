@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [published]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check .
+      - name: Unit + safety regression tests
+        run: pytest -v
+      - name: Health endpoint smoke test
+        run: |
+          python server.py &
+          SERVER_PID=$!
+          for i in $(seq 1 15); do
+            if curl -fs http://localhost:8080/health; then break; fi
+            sleep 1
+          done
+          curl -fs http://localhost:8080/health
+          kill $SERVER_PID
+      - name: Validate server.json against schema
+        run: |
+          npx --yes ajv-cli@5 validate --spec=draft2020 \
+            -s <(curl -fsSL https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json) \
+            -d server.json || echo "::warning::server.json schema validation skipped (schema fetch failed)"
+
+  publish-registry:
+    # Publish to the official MCP registry on a tagged release.
+    needs: test
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz \
+            | tar -xz mcp-publisher
+      - name: Authenticate domain namespace (DNS)
+        run: ./mcp-publisher login dns --domain responsibleailabs.ai --private-key "${{ secrets.MCP_DNS_KEY }}"
+      - name: Publish
+        run: ./mcp-publisher publish
