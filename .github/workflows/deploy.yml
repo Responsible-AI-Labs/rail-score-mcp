@@ -1,0 +1,60 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  workflow_dispatch:
+
+# id-token: write enables keyless auth to GCP via Workload Identity Federation.
+# No service-account key is stored in this repo.
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: rail-prod-gcp
+  REGION: us-central1
+  SERVICE: rail-mcp-server
+  IMAGE: us-central1-docker.pkg.dev/rail-prod-gcp/cloud-run-source-deploy/rail-mcp-server
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (WIF, keyless)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/821127047288/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: github-deployer@rail-prod-gcp.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Build with Cloud Build
+        run: |
+          gcloud builds submit \
+            --tag ${{ env.IMAGE }}:${{ github.sha }} \
+            --project ${{ env.PROJECT_ID }} \
+            --timeout=1800s
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE }} \
+            --image ${{ env.IMAGE }}:${{ github.sha }} \
+            --region ${{ env.REGION }} \
+            --project ${{ env.PROJECT_ID }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 512Mi \
+            --cpu 1 \
+            --min-instances 1 \
+            --max-instances 10 \
+            --concurrency 80 \
+            --set-env-vars RAIL_API_BASE=https://api.responsibleailabs.ai
