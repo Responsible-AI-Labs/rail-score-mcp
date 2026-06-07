@@ -115,7 +115,7 @@ a hard CI gate.
 rail_client.py   thin httpx client to api.responsibleailabs.ai (forwards key, propagates X-Request-ID)
 auth.py          RailKeyMiddleware: validate rail_ keys, bind tenant
 request_context.py  per-request ContextVars (key, tenant, request id)
-server.py        FastMCP app: 9 tools + 2 resources + /health
+server.py        FastMCP app: 9 tools + 2 resources + landing (/) + /health + server-card
 server.json      official MCP registry manifest (ai.responsibleailabs/rail-score)
 ```
 
