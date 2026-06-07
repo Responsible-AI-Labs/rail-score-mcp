@@ -54,7 +54,7 @@ to use a tool, because agents select tools from descriptions alone.
 
 | Tool | Purpose | Credits |
 |---|---|---|
-| `rail_evaluate` | Score content across the 8 RAIL dimensions | 1.0 basic / 3.0 deep |
+| `rail_evaluate` | Score content across the 8 RAIL dimensions (optional `policy` enforcement) | 1.0 basic / 3.0 deep |
 | `rail_check_compliance` | Check against gdpr, ccpa, hipaa, eu_ai_act, india_dpdp, india_ai_gov | 5–10 |
 | `rail_detect_injection` | Detect prompt injection in untrusted text | 0.5 |
 | `rail_evaluate_tool_call` | Allow/warn/block a tool call before it runs | 1.5–3.0 |
@@ -64,8 +64,27 @@ to use a tool, because agents select tools from descriptions alone.
 | `rail_dpdp_gate` | Real-time DPDP processing gate (allow/block/require_action) | 0.3 |
 | `rail_dpdp_compliance` | DPDP workflow: emit, require, evidence, session, timers | varies |
 
-Two read-only **resources** (free, zero credits): `rail://framework/dimensions`
-and `rail://account/capabilities`.
+Three read-only **resources** (free, zero credits): `rail://framework/dimensions`,
+`rail://account/capabilities`, and `rail://framework/policy-schema` (the JSON
+Schema for the `policy` parameter).
+
+## Policy enforcement
+
+`rail_evaluate` accepts an optional `policy` of per-dimension threshold rules and
+returns a `policy_outcome`. A rule fires when a dimension scores **below** its
+threshold; `action` is the most severe fired action (`block` > `flag` > `warn` >
+`allow`), mirroring the `rail-score-sdk` `Policy`/`Rule` shape.
+
+```json
+{ "rules": [
+  { "dimension": "safety",   "threshold": 7.0, "action": "block" },
+  { "dimension": "fairness", "threshold": 6.0, "action": "flag" }
+] }
+```
+
+Precedence: if the API key's **application has a dashboard policy enforced**, that
+takes precedence (`policy_outcome.source: "application"`); otherwise the request
+`policy` is applied in-gateway (`source: "request"`). No extra credits.
 
 ## The guarded agent loop
 
@@ -115,7 +134,7 @@ a hard CI gate.
 rail_client.py   thin httpx client to api.responsibleailabs.ai (forwards key, propagates X-Request-ID)
 auth.py          RailKeyMiddleware: validate rail_ keys, bind tenant
 request_context.py  per-request ContextVars (key, tenant, request id)
-server.py        FastMCP app: 9 tools + 2 resources + landing (/) + /health + server-card
+server.py        FastMCP app: 9 tools + 3 resources + landing (/) + /health + server-card
 server.json      official MCP registry manifest (ai.responsibleailabs/rail-score)
 ```
 
