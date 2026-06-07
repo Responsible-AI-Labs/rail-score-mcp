@@ -38,11 +38,23 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
 
       - name: Build with Cloud Build
+        # --async + poll: the deployer SA isn't a project Viewer, so streaming
+        # logs (the default) fails. Submit async and poll the build status.
         run: |
-          gcloud builds submit \
+          BUILD_ID=$(gcloud builds submit \
             --tag ${{ env.IMAGE }}:${{ github.sha }} \
             --project ${{ env.PROJECT_ID }} \
-            --timeout=1800s
+            --timeout=1800s --async --format='value(id)')
+          echo "Build $BUILD_ID"
+          while true; do
+            STATUS=$(gcloud builds describe "$BUILD_ID" --project ${{ env.PROJECT_ID }} --format='value(status)')
+            echo "status: $STATUS"
+            case "$STATUS" in
+              SUCCESS) break ;;
+              FAILURE|CANCELLED|TIMEOUT|EXPIRED) echo "::error::Cloud Build $STATUS"; exit 1 ;;
+            esac
+            sleep 15
+          done
 
       - name: Deploy to Cloud Run
         run: |
