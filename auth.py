@@ -28,6 +28,8 @@ from request_context import current_key, current_request_id, current_tenant
 logger = logging.getLogger("rail-mcp.auth")
 
 # Paths that never require a key: health probe and OAuth discovery metadata.
+# (The landing page "/" is handled as an exact match below, not a prefix —
+# matching "/" as a prefix would make every path public.)
 _PUBLIC_PREFIXES = ("/health", "/.well-known/")
 
 # token-hash -> (expires_at, tenant)
@@ -71,7 +73,7 @@ def extract_api_key(authorization: str, x_api_key: str) -> str | None:
 class RailKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+        if path == "/" or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
             return await call_next(request)
 
         # Correlation id: honour an inbound one, else mint a new one.

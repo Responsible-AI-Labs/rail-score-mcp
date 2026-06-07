@@ -24,7 +24,7 @@ import uvicorn
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse
 
 import config
 import rail_client
@@ -60,6 +60,9 @@ mcp = FastMCP(
     stateless_http=True,   # scale horizontally, no session affinity
     json_response=True,    # plain JSON responses, optimal for gateways
 )
+# FastMCP's constructor takes no version; the low-level server reports the `mcp`
+# SDK version unless we set this, so initialize advertises our app version.
+mcp._mcp_server.version = SERVER_VERSION
 
 
 # ── shared helpers ────────────────────────────────────────────────────────────
@@ -461,6 +464,55 @@ def capabilities() -> str:
 
 
 # ── App wiring ──────────────────────────────────────────────────────────────────
+
+# Public landing page. Exposes only public info (endpoint, auth method, docs);
+# the `/` path is allow-listed in RailKeyMiddleware so it needs no key.
+_LANDING_HTML = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAIL Score MCP Server</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  body {{ font: 16px/1.6 -apple-system, system-ui, sans-serif; max-width: 720px;
+    margin: 8vh auto; padding: 0 24px; color: #1a1a1a; }}
+  @media (prefers-color-scheme: dark) {{ body {{ color: #e8e8e8; background: #0a0a0a; }} a {{ color: #4ade80; }} code {{ background:#1a1a1a; }} }}
+  h1 {{ font-size: 1.6rem; margin-bottom: .2em; }}
+  .tag {{ color: #16a34a; font-weight: 600; }}
+  code {{ background: #f1f5f9; padding: .15em .4em; border-radius: 4px; font-size: .9em; }}
+  pre {{ background: #f1f5f9; padding: 12px 16px; border-radius: 8px; overflow:auto; }}
+  @media (prefers-color-scheme: dark) {{ pre {{ background:#1a1a1a; }} }}
+  table {{ border-collapse: collapse; margin: 1em 0; }}
+  td {{ padding: 4px 16px 4px 0; vertical-align: top; }}
+  .muted {{ color: #64748b; font-size: .9em; }}
+</style></head>
+<body>
+<h1>RAIL Score <span class="tag">MCP Server</span></h1>
+<p>Responsible-AI guardrails for agents over the Model Context Protocol:
+8-dimension evaluation, prompt-injection detection, tool-call gating,
+PII scanning, and India DPDP compliance &mdash; 9 tools in one URL.</p>
+
+<table>
+  <tr><td>MCP endpoint</td><td><code>https://mcp.responsibleailabs.ai/mcp</code> (Streamable HTTP)</td></tr>
+  <tr><td>Auth</td><td><code>Authorization: Bearer rail_…</code> or <code>X-API-Key: rail_…</code></td></tr>
+  <tr><td>Get a key</td><td><a href="https://responsibleailabs.ai/dashboard">responsibleailabs.ai/dashboard</a></td></tr>
+  <tr><td>Docs</td><td><a href="https://docs.responsibleailabs.ai/mcp/overview">docs.responsibleailabs.ai/mcp</a></td></tr>
+  <tr><td>Registry</td><td><code>ai.responsibleailabs/rail-score</code></td></tr>
+  <tr><td>Health</td><td><a href="/health">/health</a> &middot; <a href="/.well-known/mcp/server-card.json">server card</a></td></tr>
+</table>
+
+<p>Add to Claude Code:</p>
+<pre>claude mcp add --transport http rail https://mcp.responsibleailabs.ai/mcp \\
+  --header "Authorization: Bearer $RAIL_API_KEY"</pre>
+
+<p class="muted">This is an API endpoint for AI agents, not a web app. Browsers can't
+speak MCP &mdash; use an MCP client with your key. v{SERVER_VERSION}</p>
+</body></html>"""
+
+
+@mcp.custom_route("/", methods=["GET"])
+async def landing(_request: Request) -> HTMLResponse:
+    return HTMLResponse(_LANDING_HTML)
+
 
 # NOTE: must be /health, not /healthz — Google Front End intercepts the exact
 # path /healthz on *.run.app and returns its own 404 before the request reaches
