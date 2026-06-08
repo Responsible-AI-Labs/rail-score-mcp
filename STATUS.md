@@ -1,6 +1,6 @@
 # RAIL Score MCP Server — Status
 
-**Status:** 🟢 **Live** · **Version:** 1.0.0 · **Last updated:** 7 June 2026
+**Status:** 🟢 **Live** · **Version:** 1.1.0 · **Last updated:** 8 June 2026
 
 Add a responsible-AI safety layer to any agent in one URL. A remote, hosted
 [Model Context Protocol](https://modelcontextprotocol.io) server that exposes
@@ -61,7 +61,13 @@ use them, because agents select tools from descriptions alone.
 | `rail_dpdp_compliance` | DPDP workflow ops (emit, require, evidence, session, timers) | varies |
 
 **Resources** (free, read-only): `rail://framework/dimensions`,
-`rail://account/capabilities`.
+`rail://account/capabilities`, `rail://framework/policy-schema`.
+
+**Policy (v1.1.0):** `rail_evaluate` accepts an optional per-dimension `policy`
+and returns a `policy_outcome` (`action` block/flag/warn/allow). An enforced
+application/dashboard policy takes precedence; otherwise the request policy
+applies. **Errors** are structured: `UNAUTHENTICATED`, `INSUFFICIENT_CREDITS`,
+`RATE_LIMITED`, `CONTENT_TOO_HARMFUL`.
 
 **The 8 RAIL dimensions:** Fairness · Safety · Reliability · Transparency ·
 Privacy · Accountability · Inclusivity · User Impact.

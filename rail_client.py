@@ -31,13 +31,57 @@ _client = httpx.Client(
 
 
 class UpstreamError(Exception):
-    """A non-2xx response from the REST API, surfaced as a structured error."""
+    """A non-2xx response from the REST API, surfaced as a structured error.
 
-    def __init__(self, status: int, code: str, message: str):
+    `code` follows the SDK error taxonomy; `extra` carries structured fields
+    (e.g. required/balance for credits, retry_after for rate limits) returned
+    to the agent.
+    """
+
+    def __init__(self, status: int, code: str, message: str, extra: dict[str, Any] | None = None):
         self.status = status
         self.code = code
         self.message = message
+        self.extra = extra or {}
         super().__init__(f"{status} {code}: {message}")
+
+
+# Body codes the engine uses for a safety-layer content block.
+_HARMFUL_CODES = {"RAIL_CRITICAL_CONTENT", "CONTENT_TOO_HARMFUL", "CRITICAL_CONTENT"}
+
+
+def map_error(resp: httpx.Response, body: dict[str, Any]) -> UpstreamError:
+    """Map an upstream HTTP error to the SDK error taxonomy with structured fields.
+
+    401 -> UNAUTHENTICATED; 402/credit failure -> INSUFFICIENT_CREDITS (+ required,
+    balance); 429 -> RATE_LIMITED (+ retry_after); safety block -> CONTENT_TOO_HARMFUL.
+    """
+    status = resp.status_code
+    body_code = body.get("code") or ""
+    message = body.get("error") or resp.reason_phrase or "upstream error"
+    extra: dict[str, Any] = {}
+
+    if status == 401:
+        code = "UNAUTHENTICATED"
+    elif status == 402 or body_code in ("INSUFFICIENT_CREDITS", "INSUFFICIENT_BALANCE"):
+        code = "INSUFFICIENT_CREDITS"
+        for k in ("required", "balance"):
+            if k in body:
+                extra[k] = body[k]
+    elif status == 429 or body_code in ("RATE_LIMIT", "UPSTREAM_RATE_LIMITED"):
+        code = "RATE_LIMITED"
+        retry = resp.headers.get("retry-after") or body.get("retry_after")
+        if retry is not None:
+            try:
+                extra["retry_after"] = int(retry)
+            except (TypeError, ValueError):
+                extra["retry_after"] = retry
+    elif body_code in _HARMFUL_CODES:
+        code = "CONTENT_TOO_HARMFUL"
+        message = "content flagged as critically unsafe; not returned"  # no echo
+    else:
+        code = body_code or f"HTTP_{status}"
+    return UpstreamError(status, code, message, extra)
 
 
 def _auth_headers() -> dict[str, str]:
@@ -64,11 +108,11 @@ def _handle(
     # those as data, not errors.
     if resp.is_success or resp.status_code in allow_statuses:
         return body
-    # Surface the upstream error code/message without leaking internals.
-    code = body.get("code") or f"HTTP_{resp.status_code}"
-    message = body.get("error") or resp.reason_phrase or "upstream error"
-    logger.warning("upstream %s on %s -> %s", resp.status_code, resp.url.path, code)
-    raise UpstreamError(resp.status_code, code, message)
+    # Map to the SDK error taxonomy (UNAUTHENTICATED / INSUFFICIENT_CREDITS /
+    # RATE_LIMITED / CONTENT_TOO_HARMFUL / ...) with structured fields.
+    err = map_error(resp, body)
+    logger.warning("upstream %s on %s -> %s", resp.status_code, resp.url.path, err.code)
+    raise err
 
 
 def verify(key: str, request_id: str | None = None) -> dict[str, Any] | None:

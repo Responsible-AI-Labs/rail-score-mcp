@@ -89,8 +89,9 @@ def _guard(fn):
         except AuthRequired as e:
             raise ValueError(f"AUTH_REQUIRED: {e}") from e
         except UpstreamError as e:
-            # Agent-readable structured error, not raw internals.
-            raise ValueError(f"{e.code}: {e.message}") from e
+            # Agent-readable STRUCTURED error: JSON with the SDK taxonomy code
+            # plus any extra fields (required/balance, retry_after). No content.
+            raise ValueError(json.dumps({"code": e.code, "message": e.message, **e.extra})) from e
 
     return wrapper
 
@@ -108,6 +109,95 @@ def _redact_text(text: str, entities: list[dict[str, Any]]) -> str:
         label = (ent.get("type") or "PII").upper()
         redacted = redacted.replace(value, f"[REDACTED:{label}]")
     return redacted
+
+
+# ── Policy engine (SDK parity; pure, no I/O) ────────────────────────────────────
+# Mirrors rail-score-sdk Policy/Rule: a rule fires when its dimension scores
+# BELOW the threshold. Field names match the SDK (action/triggered_rules/blocked)
+# so cross-surface docs stay consistent.
+
+RAIL_DIMENSIONS = (
+    "fairness", "safety", "reliability", "transparency",
+    "privacy", "accountability", "inclusivity", "user_impact",
+)
+_POLICY_ACTIONS = ("block", "flag", "warn")
+# Severity for resolving the overall action when several rules fire.
+_ACTION_RANK = {"allow": 0, "warn": 1, "flag": 2, "block": 3}
+
+
+def validate_policy(policy: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validate a policy dict and return its rules. Raises ValueError (→ structured
+    tool error) on any problem. Shape: {"rules": [{dimension, threshold, action}]}."""
+    if not isinstance(policy, dict):
+        raise ValueError("policy must be an object with a 'rules' array")
+    unknown = set(policy) - {"rules"}
+    if unknown:
+        raise ValueError(f"unknown policy keys: {sorted(unknown)}")
+    rules = policy.get("rules")
+    if not isinstance(rules, list) or not rules:
+        raise ValueError("policy.rules must be a non-empty array")
+    for i, r in enumerate(rules):
+        if not isinstance(r, dict):
+            raise ValueError(f"rules[{i}] must be an object")
+        extra = set(r) - {"dimension", "threshold", "action"}
+        if extra:
+            raise ValueError(f"rules[{i}] has unknown keys: {sorted(extra)}")
+        if r.get("dimension") not in RAIL_DIMENSIONS:
+            raise ValueError(f"rules[{i}].dimension must be one of {list(RAIL_DIMENSIONS)}")
+        thr = r.get("threshold")
+        if not isinstance(thr, (int, float)) or isinstance(thr, bool) or not (0 <= thr <= 10):
+            raise ValueError(f"rules[{i}].threshold must be a number in 0..10")
+        if r.get("action") not in _POLICY_ACTIONS:
+            raise ValueError(f"rules[{i}].action must be one of {list(_POLICY_ACTIONS)}")
+    return rules
+
+
+def _dimension_score(scores: dict[str, Any], dim: str) -> float | None:
+    """Read a dimension's numeric score; scores may be {dim: x} or {dim: {score: x}}."""
+    v = scores.get(dim)
+    if isinstance(v, dict):
+        v = v.get("score")
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def compute_policy_outcome(scores: dict[str, Any], rules: list[dict[str, Any]]) -> dict[str, Any]:
+    """SDK-shaped outcome from per-dimension rules. A rule fires when the score is
+    BELOW its threshold. Overall action = the most severe fired action."""
+    triggered: list[dict[str, Any]] = []
+    for r in rules:
+        s = _dimension_score(scores, r["dimension"])
+        if s is not None and s < r["threshold"]:
+            triggered.append({**r, "score": round(s, 2)})
+    action = "allow"
+    for t in triggered:
+        if _ACTION_RANK[t["action"]] > _ACTION_RANK[action]:
+            action = t["action"]
+    return {
+        "action": action,
+        "triggered_rules": triggered,
+        "blocked": action == "block",
+        "source": "request",
+    }
+
+
+def _normalize_app_outcome(engine_po: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the engine's app-policy outcome (overall score vs threshold) to the
+    SDK shape. Used when the application enforces its own dashboard policy."""
+    passed = engine_po.get("passed", True)
+    enforcement = engine_po.get("enforcement", "log_only")
+    if passed:
+        action = "allow"
+    elif enforcement in ("block", "regenerate"):
+        action = "block"
+    else:  # log_only / advisory
+        action = "warn"
+    return {
+        "action": action,
+        "triggered_rules": [],
+        "blocked": action == "block",
+        "source": "application",
+        "detail": {k: engine_po.get(k) for k in ("score", "threshold", "enforcement")},
+    }
 
 
 # ── Phase 1: evaluation and guardrails ─────────────────────────────────────────
@@ -129,6 +219,7 @@ def rail_evaluate(
     domain: Literal[
         "general", "healthcare", "finance", "legal", "education", "code"
     ] = "general",
+    policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Score AI-generated content across the 8 RAIL dimensions of responsible AI
     (Fairness, Safety, Reliability, Transparency, Privacy, Accountability,
@@ -136,9 +227,15 @@ def rail_evaluate(
     levels. Use mode="basic" (1 credit, under 1s, no explanations) for routine
     gating; use mode="deep" (3 credits, 2 to 5s) when you need explanations,
     issues, and improvement suggestions. Content must be 10 to 10,000 characters.
-    Do NOT use this for regulatory checks (use rail_check_compliance) or PII
-    scanning (use rail_dpdp_scan)."""
+    Optional `policy` ({"rules":[{"dimension","threshold","action"}]}) enforces
+    per-dimension thresholds and returns a `policy_outcome` (action block/flag/
+    warn/allow); a rule fires when a dimension scores below its threshold. If the
+    API key's application has a dashboard policy enforced, that takes precedence
+    over `policy`. No extra credits beyond the eval mode. See the
+    rail://framework/policy-schema resource. Do NOT use this for regulatory checks
+    (use rail_check_compliance) or PII scanning (use rail_dpdp_scan)."""
     _validate_length(content)
+    rules = validate_policy(policy) if policy is not None else None
     payload: dict[str, Any] = {"content": content, "mode": mode, "domain": domain}
     if dimensions:
         payload["dimensions"] = dimensions
@@ -146,7 +243,25 @@ def rail_evaluate(
         payload["include_explanations"] = True
         payload["include_issues"] = True
         payload["include_suggestions"] = True
-    return rail_client.post("/railscore/v1/eval", payload)
+    resp = rail_client.post("/railscore/v1/eval", payload)
+
+    # Policy precedence: an enforced application (dashboard) policy wins; otherwise
+    # apply the request `policy` locally (SDK Policy/Rule behavior).
+    body = resp.get("result", resp)
+    engine_po = body.get("policy_outcome") if isinstance(body, dict) else None
+    if isinstance(engine_po, dict) and engine_po.get("enforced"):
+        outcome = _normalize_app_outcome(engine_po)
+    elif rules is not None:
+        scores = body.get("dimension_scores", {}) if isinstance(body, dict) else {}
+        outcome = compute_policy_outcome(scores, rules)
+    else:
+        outcome = None
+    if outcome is not None:
+        if isinstance(body, dict):
+            body["policy_outcome"] = outcome
+        else:
+            resp["policy_outcome"] = outcome
+    return resp
 
 
 @mcp.tool(
@@ -461,6 +576,40 @@ def capabilities() -> str:
     """Plan, enabled features, evaluation modes, frameworks, and request limits
     for this API key."""
     return json.dumps(rail_client.get("/railscore/v1/capabilities"))
+
+
+@mcp.resource("rail://framework/policy-schema")
+def policy_schema() -> str:
+    """JSON Schema for the `policy` parameter of rail_evaluate — valid dimensions,
+    threshold range, and actions — so agents can construct valid policies without
+    trial and error. Free, no credits."""
+    return json.dumps({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "RAIL policy",
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["rules"],
+        "properties": {
+            "rules": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["dimension", "threshold", "action"],
+                    "properties": {
+                        "dimension": {"type": "string", "enum": list(RAIL_DIMENSIONS)},
+                        "threshold": {"type": "number", "minimum": 0, "maximum": 10},
+                        "action": {"type": "string", "enum": list(_POLICY_ACTIONS)},
+                    },
+                },
+            }
+        },
+        "x-semantics": "A rule fires when its dimension scores BELOW threshold. "
+                       "policy_outcome.action is the most severe fired action "
+                       "(block > flag > warn > allow). An enforced application "
+                       "(dashboard) policy takes precedence over a request policy.",
+    })
 
 
 # ── App wiring ──────────────────────────────────────────────────────────────────
