@@ -181,6 +181,10 @@ docker run -p 8080:8080 -e RAIL_API_BASE=https://api.responsibleailabs.ai rail-s
 
 ## Registry
 
-Published to the official registry as `ai.responsibleailabs/rail-score` via
+Published to the official MCP registry as `ai.responsibleailabs/rail-score` via
 `server.json` and the `mcp-publisher` CLI (DNS-authenticated `responsibleailabs.ai`
-namespace). Downstream registries (Smithery, Glama, PulseMCP) sync from it.
+namespace); a tagged GitHub release runs the `publish-registry` job automatically.
+
+Third-party directories (Smithery, Glama, PulseMCP, mcp.so) index the repository
+and the official registry independently. Each is claimed and refreshed
+separately rather than syncing automatically, so listings can lag a release.
