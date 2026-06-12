@@ -18,11 +18,12 @@ import functools
 import json
 import logging
 import os
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
@@ -213,13 +214,30 @@ def _normalize_app_outcome(engine_po: dict[str, Any]) -> dict[str, Any]:
 )
 @_guard
 def rail_evaluate(
-    content: str,
-    mode: Literal["basic", "deep"] = "basic",
-    dimensions: list[str] | None = None,
-    domain: Literal[
-        "general", "healthcare", "finance", "legal", "education", "code"
+    content: Annotated[
+        str,
+        Field(description="The AI-generated text to score. 10 to 10,000 characters."),
+    ],
+    mode: Annotated[
+        Literal["basic", "deep"],
+        Field(description='"basic" (1 credit, <1s, scores only) or "deep" '
+                          "(3 credits, 2-5s, adds explanations, issues, suggestions)."),
+    ] = "basic",
+    dimensions: Annotated[
+        list[str] | None,
+        Field(description="Optional subset of the 8 RAIL dimensions to score; "
+                          "omit to score all."),
+    ] = None,
+    domain: Annotated[
+        Literal["general", "healthcare", "finance", "legal", "education", "code"],
+        Field(description="Domain context that tunes scoring expectations."),
     ] = "general",
-    policy: dict[str, Any] | None = None,
+    policy: Annotated[
+        dict[str, Any] | None,
+        Field(description='Optional per-dimension threshold rules '
+                          '{"rules":[{"dimension","threshold","action"}]}; returns a '
+                          "policy_outcome. See the rail://framework/policy-schema resource."),
+    ] = None,
 ) -> dict[str, Any]:
     """Score AI-generated content across the 8 RAIL dimensions of responsible AI
     (Fairness, Safety, Reliability, Transparency, Privacy, Accountability,
@@ -272,7 +290,16 @@ def rail_evaluate(
     )
 )
 @_guard
-def rail_check_compliance(content: str, frameworks: list[str]) -> dict[str, Any]:
+def rail_check_compliance(
+    content: Annotated[
+        str, Field(description="The content to check for regulatory compliance.")
+    ],
+    frameworks: Annotated[
+        list[str],
+        Field(description="1 to 5 framework ids to check against: gdpr, ccpa, hipaa, "
+                          "eu_ai_act, india_dpdp, india_ai_gov."),
+    ],
+) -> dict[str, Any]:
     """Check content against regulatory frameworks. Supported: gdpr, ccpa, hipaa,
     eu_ai_act, india_dpdp, india_ai_gov. Up to 5 frameworks per call with a
     cross-framework summary. Costs 5 to 10 credits and may take several seconds;
@@ -295,7 +322,13 @@ def rail_check_compliance(content: str, frameworks: list[str]) -> dict[str, Any]
     )
 )
 @_guard
-def rail_detect_injection(text: str) -> dict[str, Any]:
+def rail_detect_injection(
+    text: Annotated[
+        str,
+        Field(description="The untrusted text (user input, web/file content, tool "
+                          "output) to scan for prompt injection before acting on it."),
+    ],
+) -> dict[str, Any]:
     """Detect prompt injection in any untrusted text (user input, web content,
     file content, tool output) BEFORE acting on it. Detects 6 attack types:
     jailbreak, instruction_override, system_prompt_extraction, role_hijacking,
@@ -325,10 +358,21 @@ def rail_detect_injection(text: str) -> dict[str, Any]:
 )
 @_guard
 def rail_evaluate_tool_call(
-    tool_name: str,
-    arguments: dict[str, Any],
-    context: str | None = None,
-    mode: Literal["basic", "deep"] = "basic",
+    tool_name: Annotated[
+        str, Field(description="Name of the tool/function the agent intends to call.")
+    ],
+    arguments: Annotated[
+        dict[str, Any],
+        Field(description="The arguments object the agent intends to pass to the tool."),
+    ],
+    context: Annotated[
+        str | None,
+        Field(description="Optional user intent or surrounding context for the call."),
+    ] = None,
+    mode: Annotated[
+        Literal["basic", "deep"],
+        Field(description='"basic" (faster) or "deep" (more thorough) evaluation.'),
+    ] = "basic",
 ) -> dict[str, Any]:
     """Evaluate a proposed tool/function call BEFORE executing it. Returns a
     verdict: allow, warn, or block, with detected proxy variables and compliance
@@ -367,7 +411,16 @@ def rail_evaluate_tool_call(
     )
 )
 @_guard
-def rail_scan_tool_result(tool_name: str, result: str) -> dict[str, Any]:
+def rail_scan_tool_result(
+    tool_name: Annotated[
+        str, Field(description="Name of the tool whose output is being scanned.")
+    ],
+    result: Annotated[
+        str,
+        Field(description="The raw tool output to scan for PII and second-order "
+                          "injection before passing it back into reasoning."),
+    ],
+) -> dict[str, Any]:
     """Scan a tool's output for PII (with redaction) and second-order prompt
     injection BEFORE passing it back into your reasoning. Returns pass, redact,
     block, or review, plus a redacted version of the text when applicable.
@@ -414,9 +467,19 @@ def rail_scan_tool_result(tool_name: str, result: str) -> dict[str, Any]:
 )
 @_guard
 def rail_safe_regenerate(
-    content: str,
-    threshold: float = 7.0,
-    dimensions: list[str] | None = None,
+    content: Annotated[
+        str,
+        Field(description="The content to evaluate and regenerate until it passes. "
+                          "10 to 10,000 characters."),
+    ],
+    threshold: Annotated[
+        float,
+        Field(description="Minimum overall score (0-10) the content must reach."),
+    ] = 7.0,
+    dimensions: Annotated[
+        list[str] | None,
+        Field(description="Optional subset of RAIL dimensions to target; omit for all."),
+    ] = None,
 ) -> dict[str, Any]:
     """Evaluate content and, if it scores below threshold, iteratively regenerate
     it server-side until it passes (up to 5 iterations). SLOW: can take tens of
@@ -448,8 +511,17 @@ def rail_safe_regenerate(
 )
 @_guard
 def rail_dpdp_scan(
-    text: str,
-    mode: Literal["detect", "mask", "block"] = "mask",
+    text: Annotated[
+        str,
+        Field(description="The text to scan for Indian personal data under the DPDP "
+                          "Act 2023. 10 to 10,000 characters."),
+    ],
+    mode: Annotated[
+        Literal["detect", "mask", "block"],
+        Field(description='"mask" returns the text with PII masked, "detect" returns '
+                          'findings with offsets (masked values only), "block" returns '
+                          "a verdict. Use \"mask\" on text leaving your boundary."),
+    ] = "mask",
 ) -> dict[str, Any]:
     """Scan text for Indian personal data under the DPDP Act 2023: Aadhaar
     (Verhoeff-validated), PAN, mobile, UPI, passport, voter ID, driving license,
@@ -492,14 +564,29 @@ def rail_dpdp_scan(
 )
 @_guard
 def rail_dpdp_gate(
-    activity: Literal[
-        "process_data", "make_decision", "share_data",
-        "transfer_cross_border", "serve_ad", "track_user",
+    activity: Annotated[
+        Literal[
+            "process_data", "make_decision", "share_data",
+            "transfer_cross_border", "serve_ad", "track_user",
+        ],
+        Field(description="The processing action being gated."),
     ],
-    purpose: str,
-    data_categories: list[str] | None = None,
-    user_id: str = "agent-subject",
-    session_id: str | None = None,
+    purpose: Annotated[
+        str,
+        Field(description="Stated purpose of processing, required by DPDP S.4/S.6."),
+    ],
+    data_categories: Annotated[
+        list[str] | None,
+        Field(description="Optional categories of personal data involved."),
+    ] = None,
+    user_id: Annotated[
+        str,
+        Field(description="Identifier for the data principal (subject) of the activity."),
+    ] = "agent-subject",
+    session_id: Annotated[
+        str | None,
+        Field(description="Optional compliance session id to associate this gate with."),
+    ] = None,
 ) -> dict[str, Any]:
     """Real-time DPDP compliance gate for a processing step. Returns allow, block,
     or require_action enforcing child protection (S.9), cross-border transfer
@@ -529,8 +616,18 @@ def rail_dpdp_gate(
 )
 @_guard
 def rail_dpdp_compliance(
-    action: Literal["emit", "require", "evidence", "session", "timers"],
-    payload: dict[str, Any] | None = None,
+    action: Annotated[
+        Literal["emit", "require", "evidence", "session", "timers"],
+        Field(description='Workflow operation: "emit" (record an audit event), '
+                          '"require" (required actions for a step), "evidence" '
+                          '(audit-grade evidence packets), "session" (create/get a '
+                          'compliance session), "timers" (active deadlines).'),
+    ],
+    payload: Annotated[
+        dict[str, Any] | None,
+        Field(description="Action-specific payload; see the tool description for the "
+                          "shape expected by each action."),
+    ] = None,
 ) -> dict[str, Any]:
     """DPDP compliance workflow operations, selected by `action`: "emit" records
     an audit event (the only write), "require" returns required actions for a
@@ -681,8 +778,23 @@ async def _build_server_card() -> dict[str, Any]:
         "serverInfo": {"name": "rail-score", "version": SERVER_VERSION},
         # API-key auth: clients send X-API-Key (or Authorization: Bearer rail_).
         "authentication": {"required": True, "schemes": ["apiKey"]},
+        # Emit the same capability metadata the MCP tools/list returns — including
+        # annotations and outputSchema — so registries that score from this card
+        # (not just tools/list behind the auth wall) see the full picture.
         "tools": [
-            {"name": t.name, "description": t.description, "inputSchema": t.inputSchema}
+            {
+                k: v
+                for k, v in {
+                    "name": t.name,
+                    "description": t.description,
+                    "inputSchema": t.inputSchema,
+                    "outputSchema": t.outputSchema,
+                    "annotations": t.annotations.model_dump(exclude_none=True)
+                    if t.annotations
+                    else None,
+                }.items()
+                if v is not None
+            }
             for t in tools
         ],
         "resources": [

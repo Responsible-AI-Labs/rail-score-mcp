@@ -1,6 +1,6 @@
 # RAIL Score MCP Server — Status
 
-**Status:** 🟢 **Live** · **Version:** 1.1.0 · **Last updated:** 8 June 2026
+**Status:** 🟢 **Live** · **Version:** 1.1.1 · **Last updated:** 12 June 2026
 
 Add a responsible-AI safety layer to any agent in one URL. A remote, hosted
 [Model Context Protocol](https://modelcontextprotocol.io) server that exposes
