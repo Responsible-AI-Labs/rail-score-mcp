@@ -108,6 +108,23 @@ def test_server_card_is_public_and_lists_tools(client):
     assert len(card["tools"]) >= 9
 
 
+def test_server_card_includes_annotations_and_output_schema(client):
+    # Registries score capability quality from this card; it must carry the same
+    # annotations and outputSchema that tools/list returns, not just inputSchema.
+    card = client.get("/.well-known/mcp/server-card.json").json()
+    evaluate = next(t for t in card["tools"] if t["name"] == "rail_evaluate")
+    assert evaluate["annotations"]["readOnlyHint"] is True
+    assert evaluate["outputSchema"]["type"] == "object"
+
+
+def test_every_tool_parameter_has_a_description(client):
+    # Parameter descriptions drive agent ergonomics and registry quality scores.
+    card = client.get("/.well-known/mcp/server-card.json").json()
+    for tool in card["tools"]:
+        for name, schema in tool["inputSchema"].get("properties", {}).items():
+            assert schema.get("description"), f"{tool['name']}.{name} lacks a description"
+
+
 # ── auth gate on /mcp ─────────────────────────────────────────────────────────────
 
 def test_mcp_rejects_no_key(client):
