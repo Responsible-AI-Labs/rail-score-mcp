@@ -1,6 +1,10 @@
 """Auth header parsing + public endpoints (server card, health) and the
 X-API-Key gateway path."""
+import base64
+import json
+
 import pytest
+from starlette.datastructures import QueryParams
 from starlette.testclient import TestClient
 
 import auth
@@ -34,6 +38,48 @@ def test_extract_key_rejects_garbage():
     assert auth.extract_api_key("Bearer notakey", "") is None
     assert auth.extract_api_key("", "notakey") is None
     assert auth.extract_api_key("", "") is None
+
+
+# ── query-param key extraction (Smithery gateway fallback) ──────────────────────
+
+def test_extract_key_from_flat_query_param():
+    assert auth.extract_api_key_from_query(QueryParams("apiKey=rail_q1")) == "rail_q1"
+    assert auth.extract_api_key_from_query(QueryParams("api_key=rail_q2")) == "rail_q2"
+
+
+def test_extract_key_from_base64_config():
+    blob = base64.b64encode(json.dumps({"apiKey": "rail_cfg"}).encode()).decode()
+    assert auth.extract_api_key_from_query(QueryParams(f"config={blob}")) == "rail_cfg"
+
+
+def test_extract_key_from_urlsafe_unpadded_config():
+    # URL-safe base64 without padding, as some gateways send it.
+    raw = base64.urlsafe_b64encode(json.dumps({"apiKey": "rail_url"}).encode())
+    blob = raw.decode().rstrip("=")
+    assert auth.extract_api_key_from_query(QueryParams(f"config={blob}")) == "rail_url"
+
+
+def test_query_extraction_rejects_non_rail_and_garbage():
+    assert auth.extract_api_key_from_query(QueryParams("apiKey=notakey")) is None
+    assert auth.extract_api_key_from_query(QueryParams("config=not-base64!!")) is None
+    assert auth.extract_api_key_from_query(QueryParams("")) is None
+
+
+def test_mcp_accepts_query_param_key(client, monkeypatch):
+    # Smithery sends config in the URL, not headers. Mock /verify and assert
+    # the keyless-header request still clears the middleware via ?apiKey=.
+    monkeypatch.setattr(
+        rail_client, "verify", lambda key, request_id=None: {"valid": True, "org_id": "o"}
+    )
+    r = client.post(
+        "/mcp?apiKey=rail_test",
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+        headers={
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        },
+    )
+    assert r.status_code not in (401, 403)
 
 
 # ── public endpoints (no auth) ───────────────────────────────────────────────────
