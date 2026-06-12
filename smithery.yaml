@@ -1,0 +1,25 @@
+# Smithery configuration for the RAIL Score MCP server.
+#
+# The server speaks streamable HTTP. Smithery collects the values declared in
+# configSchema and forwards them to the /mcp endpoint as query parameters
+# (flat params and/or a base64-encoded `config` blob). auth.py reads the RAIL
+# key from those params when no Authorization/X-API-Key header is present.
+startCommand:
+  type: http
+  configSchema:
+    type: object
+    required:
+      - apiKey
+    properties:
+      apiKey:
+        type: string
+        title: RAIL API Key
+        description: >-
+          Your RAIL Score API key (begins with "rail_"). Create one at
+          https://responsibleailabs.ai. Sent on every request to authenticate
+          the tenant; never stored by the server.
+    additionalProperties: false
+  # Example config used by Smithery's tool-scanning sandbox. The placeholder is
+  # not a real key; users supply their own in the toolbox.
+  exampleConfig:
+    apiKey: rail_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

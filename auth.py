@@ -11,7 +11,10 @@ plus a service credential and on-behalf-of header.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import json
 import logging
 import time
 import uuid
@@ -70,6 +73,43 @@ def extract_api_key(authorization: str, x_api_key: str) -> str | None:
     return None
 
 
+# Query-param keys gateways use when they cannot set custom headers. Smithery's
+# toolbox passes server config in the URL: either flat params (?apiKey=rail_...)
+# or a base64-encoded JSON blob (?config=<base64>). Headers stay the preferred,
+# more secure path (query strings can land in access logs); these are a
+# compatibility fallback only.
+_QUERY_KEY_NAMES = ("api_key", "apiKey", "rail_api_key", "railApiKey", "key")
+
+
+def extract_api_key_from_query(params: Any) -> str | None:
+    """Pull a `rail_` key from Smithery-style query parameters.
+
+    Accepts both flat params and a base64-encoded JSON `config` blob. Returns
+    only values that look like RAIL keys so a stray param never spoofs auth.
+    """
+    for name in _QUERY_KEY_NAMES:
+        value = params.get(name)
+        if value and value.startswith("rail_"):
+            return value.strip()
+
+    raw = params.get("config")
+    if raw:
+        try:
+            # base64 may arrive URL-safe and unpadded; normalise before decode.
+            padded = raw.replace("-", "+").replace("_", "/")
+            padded += "=" * (-len(padded) % 4)
+            decoded = base64.b64decode(padded)
+            cfg = json.loads(decoded)
+        except (binascii.Error, ValueError, TypeError):
+            return None
+        if isinstance(cfg, dict):
+            for name in _QUERY_KEY_NAMES:
+                value = cfg.get(name)
+                if isinstance(value, str) and value.startswith("rail_"):
+                    return value.strip()
+    return None
+
+
 class RailKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -83,6 +123,9 @@ class RailKeyMiddleware(BaseHTTPMiddleware):
             request.headers.get("authorization", ""),
             request.headers.get("x-api-key", ""),
         )
+        # Fall back to Smithery-style query-param config when no header is set.
+        if key is None:
+            key = extract_api_key_from_query(request.query_params)
         if key is None:
             return JSONResponse(
                 {"error": "missing or invalid RAIL API key", "code": "UNAUTHENTICATED"},
