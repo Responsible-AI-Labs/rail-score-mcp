@@ -63,6 +63,7 @@ jobs:
             --region ${{ env.REGION }} \
             --project ${{ env.PROJECT_ID }} \
             --platform managed \
+            --service-account=rail-mcp-run@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
             --allow-unauthenticated \
             --memory 512Mi \
             --cpu 1 \
