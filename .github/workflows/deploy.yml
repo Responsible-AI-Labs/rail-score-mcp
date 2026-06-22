@@ -44,8 +44,8 @@ jobs:
           BUILD_ID=$(gcloud builds submit \
             --tag ${{ env.IMAGE }}:${{ github.sha }} \
             --project ${{ env.PROJECT_ID }} \
-            --service-account=projects/${{ env.PROJECT_ID }}/serviceAccounts/821127047288@cloudbuild.gserviceaccount.com \
-            --logging=CLOUD_LOGGING_ONLY \
+            --service-account=projects/${{ env.PROJECT_ID }}/serviceAccounts/rail-build@rail-prod-gcp.iam.gserviceaccount.com \
+            --default-buckets-behavior=regional-user-owned-bucket \
             --timeout=1800s --async --format='value(id)')
           echo "Build $BUILD_ID"
           while true; do
